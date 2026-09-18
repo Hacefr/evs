@@ -250,6 +250,7 @@
         <div class="control-dock">
             <button class="btn" id="startAudioBtn" onclick="initAudio()">Enable Microphone</button>
             <button class="btn" id="muteBtn" onclick="toggleMute()">Mute Mic</button>
+            <button class="btn btn-danger" onclick="destroySession()">Disconnect Session</button>
         </div>
     </div>
 
@@ -422,6 +423,26 @@
             const btn = document.getElementById('muteBtn');
             btn.classList.toggle('btn-danger', isMuted);
             btn.innerText = isMuted ? 'Unmute Mic' : 'Mute Mic';
+        }
+
+        function destroySession() {
+            // Stop local microphone hardware access
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+
+            // Close WebRTC peer streams
+            Object.keys(peerConnections).forEach(peer => {
+                peerConnections[peer].close();
+            });
+
+            // Close active WebSocket connection
+            if (ws) {
+                ws.close();
+            }
+
+            // Redirect to root without auth parameters to hit fake 404 page
+            window.location.href = window.location.origin;
         }
 
         function updateRosterUI(users) {

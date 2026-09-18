@@ -52,7 +52,7 @@ app.get('/', (req, res) => {
     if (token && isValidToken(token)) {
         res.sendFile(path.join(__dirname, 'public', 'index.html'));
     } else {
-        // Return 404 status code alongside fake broken page for web crawlers
+        // Return 404 status code alongside fake broken page (url.html) for web crawlers
         res.status(404).sendFile(path.join(__dirname, 'public', 'url.html'));
     }
 });
@@ -96,7 +96,7 @@ wss.on('connection', (ws) => {
                     broadcastRoster();
                     break;
 
-                // Handle WebRTC WebRTC peer-to-peer signaling (offers, answers, ICE candidates)
+                // Handle WebRTC peer-to-peer signaling (offers, answers, ICE candidates)
                 case 'signal':
                     const targetSocket = activeSessions.get(data.target);
                     if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
@@ -110,7 +110,6 @@ wss.on('connection', (ws) => {
 
                 // Position updates sent from Minecraft via Skript/HTTP or client bridge
                 case 'position':
-                    // Broadcast updated 3D coordinates to nearby connected peers
                     broadcastToPeers(clientUsername, {
                         type: 'position_update',
                         username: clientUsername,
@@ -159,5 +158,20 @@ function broadcastToPeers(sender, packet) {
 }
 
 server.listen(PORT, () => {
+    console.log(`===================================================`);
     console.log(`Backend server running on port ${PORT}`);
+    
+    // Generate a temporary test token on redeploy
+    const testToken = Math.random().toString(36).substring(2, 10);
+    validTokens.add(testToken);
+    
+    // Expire the test token after 10 minutes
+    setTimeout(() => {
+        validTokens.delete(testToken);
+    }, 600000);
+
+    const hostUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    console.log(`REDEPLOY TEST LINK (Valid for 10 minutes):`);
+    console.log(`${hostUrl}/?auth=${testToken}&user=AdminTest`);
+    console.log(`===================================================`);
 });

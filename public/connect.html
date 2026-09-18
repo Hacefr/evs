@@ -19,7 +19,7 @@
     <div class="card">
         <h2>Proximity Voice Chat</h2>
         <div id="status" class="status">Connecting to voice channel...</div>
-        <div id="peers" class="active-users">Connected Players: None</div>
+        <div id="peers" class="active-users">Connected Players: Waiting for others...</div>
     </div>
 
     <script>
@@ -29,9 +29,7 @@
         const token = urlParams.get('token');
 
         let myUsername = "";
-        let myPosition = { x: 0, y: 0, z: 0, world: "world" };
-        const peers = {}; // socketId -> { peer, username, audioEl, position }
-        const positions = {}; // username -> { x, y, z, world }
+        const peers = {}; // socketId -> { peer, username, audioEl }
         let localStream = null;
 
         if (!token) {
@@ -55,7 +53,6 @@
                 statusDiv.className = "status connected";
                 statusDiv.innerText = `Connected as ${myUsername}`;
 
-                // Request Microphone Access
                 try {
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 } catch (err) {
@@ -68,9 +65,16 @@
                     auth: { username: myUsername }
                 });
 
-                // Socket WebRTC Handshake
+                // Receive list of existing peers when joining
+                socket.on('all_peers', (peerList) => {
+                    peerList.forEach(({ socketId, username }) => {
+                        createPeer(socket, socketId, username, true);
+                    });
+                });
+
+                // Receive event when a new peer joins after us
                 socket.on('peer_joined', ({ username, socketId }) => {
-                    createPeer(socket, socketId, username, true);
+                    createPeer(socket, socketId, username, false);
                 });
 
                 socket.on('signal', ({ senderSocketId, senderUsername, signalData }) => {
@@ -88,14 +92,6 @@
                         updatePeerList();
                     }
                 });
-
-                socket.on('position_update', ({ username, position }) => {
-                    positions[username] = position;
-                    if (username === myUsername) {
-                        myPosition = position;
-                    }
-                    updateProximityAudio();
-                });
             })
             .catch(() => {
                 statusDiv.className = "status error";
@@ -104,6 +100,8 @@
         }
 
         function createPeer(socket, targetSocketId, targetUsername, initiator) {
+            if (peers[targetSocketId]) return;
+
             const peer = new SimplePeer({
                 initiator: initiator,
                 stream: localStream,
@@ -115,10 +113,14 @@
             });
 
             peer.on('stream', (stream) => {
-                const audio = document.createElement('audio');
+                let audio = document.getElementById(`audio-${targetSocketId}`);
+                if (!audio) {
+                    audio = document.createElement('audio');
+                    audio.id = `audio-${targetSocketId}`;
+                    audio.autoplay = true;
+                    document.body.appendChild(audio);
+                }
                 audio.srcObject = stream;
-                audio.autoplay = true;
-                document.body.appendChild(audio);
 
                 peers[targetSocketId] = {
                     peer: peer,
@@ -134,30 +136,6 @@
             peersDiv.innerText = activeList.length > 0 
                 ? "Active Players: " + activeList.join(", ") 
                 : "Connected Players: Waiting for others...";
-        }
-
-        function updateProximityAudio() {
-            const MAX_DISTANCE = 30; // Blocks away before silent
-
-            Object.values(peers).forEach(p => {
-                const targetPos = positions[p.username];
-                if (!targetPos || targetPos.world !== myPosition.world) {
-                    p.audioEl.volume = 0;
-                    return;
-                }
-
-                const dx = targetPos.x - myPosition.x;
-                const dy = targetPos.y - myPosition.y;
-                const dz = targetPos.z - myPosition.z;
-                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-                if (distance >= MAX_DISTANCE) {
-                    p.audioEl.volume = 0;
-                } else {
-                    // Linear drop-off from 100% volume down to 0% at 30 blocks
-                    p.audioEl.volume = Math.max(0, 1 - (distance / MAX_DISTANCE));
-                }
-            });
         }
     </script>
 </body>

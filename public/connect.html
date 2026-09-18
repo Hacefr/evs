@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Proximity Voice Dashboard</title>
     <script src="/socket.io/socket.io.js"></script>
-    <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
         .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 400px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
@@ -29,8 +28,18 @@
         const token = urlParams.get('token');
 
         let myUsername = "";
-        const peers = {}; // socketId -> { peer, username, audioEl }
         let localStream = null;
+        let socket = null;
+        
+        // socketId -> { pc, username, audioEl }
+        const peers = {};
+
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
 
         if (!token) {
             statusDiv.className = "status error";
@@ -53,41 +62,63 @@
                 statusDiv.className = "status connected";
                 statusDiv.innerText = `Connected as ${myUsername}`;
 
+                // Request microphone access
                 try {
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 } catch (err) {
                     statusDiv.className = "status error";
-                    statusDiv.innerText = "Microphone access denied!";
+                    statusDiv.innerText = "Microphone access denied! Allow mic access in browser.";
                     return;
                 }
 
-                const socket = io({
+                socket = io({
                     auth: { username: myUsername }
                 });
 
-                // Receive list of existing peers when joining
+                // Receive list of existing users in room
                 socket.on('all_peers', (peerList) => {
                     peerList.forEach(({ socketId, username }) => {
-                        createPeer(socket, socketId, username, true);
+                        initiatePeerConnection(socketId, username, true);
                     });
                 });
 
-                // Receive event when a new peer joins after us
+                // New player connected
                 socket.on('peer_joined', ({ username, socketId }) => {
-                    createPeer(socket, socketId, username, false);
+                    initiatePeerConnection(socketId, username, false);
                 });
 
-                socket.on('signal', ({ senderSocketId, senderUsername, signalData }) => {
+                // Handle signaling messages (Offers, Answers, ICE Candidates)
+                socket.on('signal', async ({ senderSocketId, senderUsername, signalData }) => {
                     if (!peers[senderSocketId]) {
-                        createPeer(socket, senderSocketId, senderUsername, false);
+                        initiatePeerConnection(senderSocketId, senderUsername, false);
                     }
-                    peers[senderSocketId].peer.signal(signalData);
+
+                    const pc = peers[senderSocketId].pc;
+
+                    try {
+                        if (signalData.sdp) {
+                            await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+                            if (signalData.sdp.type === 'offer') {
+                                const answer = await pc.createAnswer();
+                                await pc.setLocalDescription(answer);
+                                socket.emit('signal', {
+                                    targetSocketId: senderSocketId,
+                                    signalData: { sdp: pc.localDescription }
+                                });
+                            }
+                        } else if (signalData.candidate) {
+                            await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+                        }
+                    } catch (e) {
+                        console.error("Signaling error:", e);
+                    }
                 });
 
+                // Player left
                 socket.on('peer_left', ({ socketId }) => {
                     if (peers[socketId]) {
                         if (peers[socketId].audioEl) peers[socketId].audioEl.remove();
-                        peers[socketId].peer.destroy();
+                        peers[socketId].pc.close();
                         delete peers[socketId];
                         updatePeerList();
                     }
@@ -99,20 +130,26 @@
             });
         }
 
-        function createPeer(socket, targetSocketId, targetUsername, initiator) {
+        function initiatePeerConnection(targetSocketId, targetUsername, isInitiator) {
             if (peers[targetSocketId]) return;
 
-            const peer = new SimplePeer({
-                initiator: initiator,
-                stream: localStream,
-                trickle: false
-            });
+            const pc = new RTCPeerConnection(rtcConfig);
 
-            peer.on('signal', (signalData) => {
-                socket.emit('signal', { targetSocketId, signalData });
-            });
+            // Add local mic stream
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-            peer.on('stream', (stream) => {
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', {
+                        targetSocketId: targetSocketId,
+                        signalData: { candidate: event.candidate }
+                    });
+                }
+            };
+
+            // Receive remote audio track
+            pc.ontrack = (event) => {
                 let audio = document.getElementById(`audio-${targetSocketId}`);
                 if (!audio) {
                     audio = document.createElement('audio');
@@ -120,15 +157,31 @@
                     audio.autoplay = true;
                     document.body.appendChild(audio);
                 }
-                audio.srcObject = stream;
+                audio.srcObject = event.streams[0];
 
-                peers[targetSocketId] = {
-                    peer: peer,
-                    username: targetUsername,
-                    audioEl: audio
-                };
+                peers[targetSocketId].audioEl = audio;
                 updatePeerList();
-            });
+            };
+
+            peers[targetSocketId] = {
+                pc: pc,
+                username: targetUsername,
+                audioEl: null
+            };
+
+            updatePeerList();
+
+            // Create initial offer if initiator
+            if (isInitiator) {
+                pc.createOffer().then(offer => {
+                    return pc.setLocalDescription(offer);
+                }).then(() => {
+                    socket.emit('signal', {
+                        targetSocketId: targetSocketId,
+                        signalData: { sdp: pc.localDescription }
+                    });
+                }).catch(err => console.error("Offer creation error:", err));
+            }
         }
 
         function updatePeerList() {

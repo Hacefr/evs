@@ -102,7 +102,34 @@ app.post('/api/auth/validate', (req, res) => {
     });
 });
 
-// POST Endpoint: Position Telemetry from Minecraft
+// GET Endpoint: Position Telemetry for native Skript
+app.get('/api/position', (req, res) => {
+    const { username, world, x, y, z } = req.query;
+
+    if (!username) {
+        return res.status(400).send("MISSING_USERNAME");
+    }
+
+    const posData = {
+        world: world || "world",
+        x: parseFloat(x) || 0,
+        y: parseFloat(y) || 0,
+        z: parseFloat(z) || 0,
+        lastSeen: Date.now()
+    };
+
+    playerPositions.set(username, posData);
+
+    // Broadcast updated positions to connected WebRTC peers
+    io.emit('position_update', {
+        username: username,
+        position: posData
+    });
+
+    res.send("OK");
+});
+
+// POST Endpoint: Position Telemetry
 app.post('/api/position', (req, res) => {
     const { username, world, x, y, z } = req.body;
 
@@ -120,7 +147,6 @@ app.post('/api/position', (req, res) => {
 
     playerPositions.set(username, posData);
 
-    // Broadcast updated positions to connected WebRTC peers
     io.emit('position_update', {
         username: username,
         position: posData

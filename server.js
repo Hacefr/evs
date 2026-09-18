@@ -31,7 +31,6 @@ function generateOneTimeToken(username) {
     return token;
 }
 
-// Clean up expired tokens
 setInterval(() => {
     const now = Date.now();
     for (const [token, data] of activeTokens.entries()) {
@@ -41,7 +40,6 @@ setInterval(() => {
     }
 }, 60000);
 
-// Connect route handler
 app.get('/connect', (req, res) => {
     const { user, secret, token } = req.query;
 
@@ -65,7 +63,7 @@ app.post('/api/auth/validate', (req, res) => {
     }
 
     const tokenData = activeTokens.get(token);
-    activeTokens.delete(token); // Single-use burn
+    activeTokens.delete(token);
 
     res.json({
         valid: true,
@@ -73,7 +71,6 @@ app.post('/api/auth/validate', (req, res) => {
     });
 });
 
-// Socket.io Middleware & Signaling
 io.use((socket, next) => {
     const username = socket.handshake.auth.username;
     if (!username) {
@@ -83,8 +80,17 @@ io.use((socket, next) => {
     next();
 });
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
+    // Get all sockets currently in the voice room BEFORE joining
+    const socketsInRoom = await io.in('voice_room').fetchSockets();
+    const existingPeers = socketsInRoom.map(s => ({ socketId: s.id, username: s.username }));
+
     socket.join('voice_room');
+
+    // Tell the newly connected player about all existing players
+    socket.emit('all_peers', existingPeers);
+
+    // Notify existing players that a new peer joined
     socket.to('voice_room').emit('peer_joined', { username: socket.username, socketId: socket.id });
 
     socket.on('signal', (data) => {
@@ -97,7 +103,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         playerPositions.delete(socket.username);
-        io.to('voice_room').emit('peer_left', { username: socket.username, socketId: socket.id });
+        io.to('voice_room').emit('peer_left', { socketId: socket.id });
     });
 });
 

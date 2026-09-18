@@ -70,12 +70,13 @@
 </div>
 
 <div class="debug-box" id="debug-log">
-    <div class="debug-entry">[SYSTEM] Diagnostic log initialized.</div>
+    <div class="debug-entry">[SYSTEM] Diagnostic log initialized. Click anywhere on the page to enable sound playback.</div>
 </div>
 
 <script>
     function log(msg, isError = false) {
         const box = document.getElementById('debug-log');
+        if (!box) return;
         const div = document.createElement('div');
         div.className = isError ? 'debug-entry debug-error' : 'debug-entry';
         div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -94,11 +95,24 @@
     let ws = new WebSocket(wsUrl);
     let localStream = null;
     let isMuted = false;
+    let audioContextResumed = false;
     const peerConnections = {};
     const peerAudioElements = {};
 
+    // Global click listener to unblock browser AudioContext restrictions
+    function unlockAudio() {
+        if (!audioContextResumed) {
+            const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+            tempCtx.resume().then(() => {
+                log("AudioContext unlocked by user click.");
+                audioContextResumed = true;
+            });
+        }
+    }
+    window.addEventListener('click', unlockAudio, { once: true });
+
     ws.onopen = () => {
-        log("WebSocket connection established!");
+        log("WebSocket connected successfully.");
         document.getElementById('conn-status').innerText = "Connected";
     };
 
@@ -109,14 +123,14 @@
         document.getElementById('status-dot').style.backgroundColor = "#ff4d4d";
     };
 
-    // Microphone Setup + Audio Visualizer
+    // Get Microphone Stream
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         .then(stream => {
             localStream = stream;
             log("Microphone access granted.");
             document.getElementById('mic-status').innerHTML = '● Microphone Active';
 
-            // Audio Context for Voice Level Bar
+            // Audio Visualizer Setup
             const audioContext = new (window.AudioContext || window.webkitAudioContext)();
             const analyser = audioContext.createAnalyser();
             const source = audioContext.createMediaStreamSource(stream);
@@ -145,12 +159,12 @@
             document.getElementById('mic-status').innerHTML = '● Mic Access Denied';
         });
 
-    // Handle Signaling and Roster Updates
+    // WebSockets Message & Roster Handler
     ws.onmessage = async (event) => {
         const data = JSON.parse(event.data);
 
         if (data.type === 'roster') {
-            log(`Roster updated: ${data.players.length} players online.`);
+            log(`Roster updated: ${data.players.length} online.`);
             const rosterList = document.getElementById('roster-list');
             rosterList.innerHTML = '';
             
@@ -175,41 +189,63 @@
             const pc = peerConnections[data.sender];
 
             if (data.type === 'offer') {
+                log(`Received offer from ${data.sender}`);
                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 ws.send(JSON.stringify({ target: data.sender, type: 'answer', payload: answer }));
             } else if (data.type === 'answer') {
+                log(`Received answer from ${data.sender}`);
                 await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
             } else if (data.type === 'candidate') {
-                await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+                } catch (e) {
+                    log(`Candidate error: ${e.message}`, true);
+                }
             }
         }
     };
 
     function createPeerConnection(peer, isInitiator) {
-        log(`Initializing WebRTC Peer Connection with: ${peer}`);
+        log(`Creating WebRTC connection for peer: ${peer}`);
         const pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
         });
         peerConnections[peer] = pc;
 
+        // Attach microphone track before sending offer/answer
         if (localStream) {
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        } else {
+            log("Warning: Mic stream not ready when creating connection!", true);
         }
 
+        // Receive remote track
         pc.ontrack = (event) => {
-            log(`Receiving audio stream from: ${peer}`);
+            log(`Ontrack event triggered for: ${peer}`);
             let audio = peerAudioElements[peer];
             if (!audio) {
                 audio = document.createElement('audio');
+                audio.id = `audio-${peer}`;
                 audio.autoplay = true;
+                audio.setAttribute('playsinline', '');
                 peerAudioElements[peer] = audio;
                 document.body.appendChild(audio);
             }
             audio.srcObject = event.streams[0];
+            
+            // Explicit play trigger to bypass browser audio block
+            audio.play().then(() => {
+                log(`Successfully playing remote audio stream for: ${peer}`);
+            }).catch(err => {
+                log(`Autoplay blocked for ${peer}: Click anywhere on the page!`, true);
+            });
 
-            // Render Peer Volume Control Card
+            // Populate Active Voice Peer Card
             const activeList = document.getElementById('active-peers');
             if (!document.getElementById(`card-${peer}`)) {
                 const li = document.createElement('li');
@@ -217,7 +253,7 @@
                 li.innerHTML = `
                     <div class="peer-header">
                         <span>${peer}</span>
-                        <span style="font-size:0.75rem; color:#52b788;">Streaming</span>
+                        <span style="font-size:0.75rem; color:#52b788;">Connected</span>
                     </div>
                     <div class="peer-controls">
                         <label>Volume:</label>
@@ -255,7 +291,6 @@
         const btn = document.getElementById('mute-btn');
         btn.innerText = isMuted ? 'Unmute Mic' : 'Mute Mic';
         btn.style.backgroundColor = isMuted ? '#856404' : '#333';
-
         log(isMuted ? "Microphone muted" : "Microphone unmuted");
 
         if (ws.readyState === WebSocket.OPEN) {

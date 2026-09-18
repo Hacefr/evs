@@ -16,7 +16,8 @@ const activeSessions = new Map(); // username -> ws socket
 let isStressTesting = false;
 let fakeSessions = new Map();
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static assets EXCEPT index.html automatically on root hit
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.use(express.json());
 
 // Helper function to validate auth tokens

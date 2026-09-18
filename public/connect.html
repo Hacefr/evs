@@ -6,8 +6,8 @@
     <title>Proximity Voice Dashboard</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
-        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 400px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
+        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 400px; width: 90%; }
         .status { font-weight: bold; margin-top: 15px; font-size: 1.1em; }
         .connected { color: #4CAF50; }
         .error { color: #f44336; }
@@ -16,7 +16,7 @@
 <body>
     <div class="card">
         <h2>Proximity Voice Chat</h2>
-        <div id="status" class="status">Authenticating session...</div>
+        <div id="status" class="status">Connecting to voice room...</div>
     </div>
 
     <script>
@@ -26,7 +26,7 @@
 
         if (!token) {
             statusDiv.className = "status error";
-            statusDiv.innerText = "Error: Invalid session link. Run /voice in-game.";
+            statusDiv.innerText = "Error: Invalid link. Run /voice in-game.";
         } else {
             fetch('/api/auth/validate', {
                 method: 'POST',
@@ -37,7 +37,7 @@
             .then(data => {
                 if (!data.valid) {
                     statusDiv.className = "status error";
-                    statusDiv.innerText = "Error: Session expired. Run /voice in-game for a new link.";
+                    statusDiv.innerText = "Error: Token expired. Run /voice in-game for a new link.";
                     return;
                 }
 

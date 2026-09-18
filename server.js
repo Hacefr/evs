@@ -19,8 +19,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "MY_SUPER_SECRET_KEY_123";
 
-const activeTokens = new Map(); // token -> { username, createdAt }
-const playerPositions = new Map(); // username -> { world, x, y, z, lastSeen }
+const activeTokens = new Map();
+const playerPositions = new Map();
 
 function generateOneTimeToken(username) {
     const token = crypto.randomBytes(16).toString('hex');
@@ -31,7 +31,7 @@ function generateOneTimeToken(username) {
     return token;
 }
 
-// Clean up tokens older than 5 minutes
+// Clean up expired tokens
 setInterval(() => {
     const now = Date.now();
     for (const [token, data] of activeTokens.entries()) {
@@ -57,47 +57,6 @@ app.get('/connect', (req, res) => {
     res.status(403).send("Unauthorized connection link. Run /voice in-game.");
 });
 
-// API Endpoints
-app.get('/api/auth/token', (req, res) => {
-    const { username, secret } = req.query;
-
-    if (!secret || secret !== ADMIN_SECRET) {
-        return res.status(403).send("UNAUTHORIZED");
-    }
-
-    if (!username) {
-        return res.status(400).send("MISSING_USERNAME");
-    }
-
-    generateOneTimeToken(username);
-    res.send("OK");
-});
-
-app.get('/api/position', (req, res) => {
-    const { username, world, x, y, z } = req.query;
-
-    if (!username) {
-        return res.status(400).send("MISSING_USERNAME");
-    }
-
-    const posData = {
-        world: world || "world",
-        x: parseFloat(x) || 0,
-        y: parseFloat(y) || 0,
-        z: parseFloat(z) || 0,
-        lastSeen: Date.now()
-    };
-
-    playerPositions.set(username, posData);
-
-    io.emit('position_update', {
-        username: username,
-        position: posData
-    });
-
-    res.send("OK");
-});
-
 app.post('/api/auth/validate', (req, res) => {
     const { token } = req.body;
 
@@ -106,7 +65,7 @@ app.post('/api/auth/validate', (req, res) => {
     }
 
     const tokenData = activeTokens.get(token);
-    activeTokens.delete(token); // Burn after reading
+    activeTokens.delete(token); // Single-use burn
 
     res.json({
         valid: true,
@@ -114,7 +73,7 @@ app.post('/api/auth/validate', (req, res) => {
     });
 });
 
-// WebRTC Signaling via Socket.io
+// Socket.io Middleware & Signaling
 io.use((socket, next) => {
     const username = socket.handshake.auth.username;
     if (!username) {

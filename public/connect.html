@@ -11,19 +11,12 @@
         .status { font-weight: bold; margin-top: 15px; font-size: 1.1em; }
         .connected { color: #4CAF50; }
         .error { color: #f44336; }
-        
-        .controls-bar { margin-top: 20px; padding-bottom: 20px; border-bottom: 1px solid #333; }
-        .mic-btn { background: #2196F3; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; }
+        .controls-bar { margin-top: 20px; padding-bottom: 20px; border-bottom: 1px solid #333; display: flex; gap: 10px; justify-content: center; }
+        .btn { border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 0.95em; }
+        .mic-btn { background: #2196F3; color: white; }
         .mic-btn.muted { background: #f44336; }
-
         .peer-list { margin-top: 20px; text-align: left; }
         .peer-item { background: #2a2a2a; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
-        .peer-header { display: flex; justify-content: space-between; align-items: center; }
-        .peer-controls { display: flex; align-items: center; gap: 10px; }
-        .volume-slider { width: 100%; cursor: pointer; }
-        .volume-label { font-size: 0.85em; color: #aaa; min-width: 45px; text-align: right; }
-        .mute-btn { background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85em; }
-        .mute-btn.muted { background: #4CAF50; }
     </style>
 </head>
 <body>
@@ -32,7 +25,7 @@
         <div id="status" class="status">Connecting to voice channel...</div>
         
         <div class="controls-bar">
-            <button id="selfMicBtn" class="mic-btn" onclick="toggleSelfMic()">Mute My Mic</button>
+            <button id="selfMicBtn" class="btn mic-btn" onclick="toggleSelfMic()">Mute My Mic</button>
         </div>
 
         <div class="peer-list">
@@ -45,223 +38,127 @@
         const statusDiv = document.getElementById('status');
         const peersContainer = document.getElementById('peersContainer');
         const selfMicBtn = document.getElementById('selfMicBtn');
+        
         const urlParams = new URLSearchParams(window.location.search);
-        const token = urlParams.get('token');
+        const userParam = urlParams.get('user');
+        const secretParam = urlParams.get('secret');
 
-        let myUsername = "";
+        const EXPECTED_SECRET = "MY_SUPER_SECRET_KEY_123";
+
+        let myUsername = userParam || "";
         let localStream = null;
         let socket = null;
         let isSelfMuted = false;
-
-        // socketId -> { pc, username, audioEl, isMuted, volume }
         const peers = {};
 
-        const rtcConfig = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-
-        if (!token) {
+        if (!userParam || secretParam !== EXPECTED_SECRET) {
             statusDiv.className = "status error";
             statusDiv.innerText = "Error: Invalid link. Run /voice in-game.";
         } else {
-            fetch('/api/auth/validate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token })
-            })
-            .then(res => res.json())
-            .then(async data => {
-                if (!data.valid) {
-                    statusDiv.className = "status error";
-                    statusDiv.innerText = "Error: Token expired. Run /voice in-game for a new link.";
-                    return;
-                }
+            startVoiceSession();
+        }
 
-                myUsername = data.username;
-                statusDiv.className = "status connected";
-                statusDiv.innerText = `Connected as ${myUsername}`;
+        async function startVoiceSession() {
+            statusDiv.className = "status connected";
+            statusDiv.innerText = `Connected as ${myUsername}`;
 
-                try {
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                } catch (err) {
-                    statusDiv.className = "status error";
-                    statusDiv.innerText = "Microphone access denied!";
-                    return;
-                }
-
-                socket = io({
-                    auth: { username: myUsername }
-                });
-
-                socket.on('all_peers', (peerList) => {
-                    peerList.forEach(({ socketId, username }) => {
-                        initiatePeerConnection(socketId, username, true);
-                    });
-                });
-
-                socket.on('peer_joined', ({ username, socketId }) => {
-                    initiatePeerConnection(socketId, username, false);
-                });
-
-                socket.on('signal', async ({ senderSocketId, senderUsername, signalData }) => {
-                    if (!peers[senderSocketId]) {
-                        initiatePeerConnection(senderSocketId, senderUsername, false);
-                    }
-
-                    const pc = peers[senderSocketId].pc;
-
-                    try {
-                        if (signalData.sdp) {
-                            await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
-                            if (signalData.sdp.type === 'offer') {
-                                const answer = await pc.createAnswer();
-                                await pc.setLocalDescription(answer);
-                                socket.emit('signal', {
-                                    targetSocketId: senderSocketId,
-                                    signalData: { sdp: pc.localDescription }
-                                });
-                            }
-                        } else if (signalData.candidate) {
-                            await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
-                        }
-                    } catch (e) {
-                        console.error("Signaling error:", e);
-                    }
-                });
-
-                socket.on('peer_left', ({ socketId }) => {
-                    if (peers[socketId]) {
-                        if (peers[socketId].audioEl) peers[socketId].audioEl.remove();
-                        peers[socketId].pc.close();
-                        delete peers[socketId];
-                        updatePeerUI();
-                    }
-                });
-            })
-            .catch(() => {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch (err) {
                 statusDiv.className = "status error";
-                statusDiv.innerText = "Server connection error.";
+                statusDiv.innerText = "Microphone access denied!";
+                return;
+            }
+
+            socket = io({
+                auth: { username: myUsername }
+            });
+
+            socket.on('all_peers', (peerList) => {
+                peerList.forEach(({ socketId, username }) => {
+                    initiatePeerConnection(socketId, username, true);
+                });
+            });
+
+            socket.on('peer_joined', ({ username, socketId }) => {
+                initiatePeerConnection(socketId, username, false);
+            });
+
+            socket.on('signal', async ({ senderSocketId, senderUsername, signalData }) => {
+                if (!peers[senderSocketId]) {
+                    initiatePeerConnection(senderSocketId, senderUsername, false);
+                }
+                const pc = peers[senderSocketId].pc;
+                try {
+                    if (signalData.sdp) {
+                        await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+                        if (signalData.sdp.type === 'offer') {
+                            const answer = await pc.createAnswer();
+                            await pc.setLocalDescription(answer);
+                            socket.emit('signal', {
+                                targetSocketId: senderSocketId,
+                                signalData: { sdp: pc.localDescription }
+                            });
+                        }
+                    } else if (signalData.candidate) {
+                        await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+                    }
+                } catch (e) {
+                    console.error("Signaling error:", e);
+                }
+            });
+
+            socket.on('peer_left', ({ socketId }) => {
+                if (peers[socketId]) {
+                    if (peers[socketId].audioEl) peers[socketId].audioEl.remove();
+                    peers[socketId].pc.close();
+                    delete peers[socketId];
+                    updatePeerUI();
+                }
             });
         }
 
         function toggleSelfMic() {
             if (!localStream) return;
             isSelfMuted = !isSelfMuted;
-            
-            localStream.getAudioTracks().forEach(track => {
-                track.enabled = !isSelfMuted;
-            });
-
-            if (isSelfMuted) {
-                selfMicBtn.innerText = "Unmute My Mic";
-                selfMicBtn.classList.add('muted');
-            } else {
-                selfMicBtn.innerText = "Mute My Mic";
-                selfMicBtn.classList.remove('muted');
-            }
+            localStream.getAudioTracks().forEach(track => { track.enabled = !isSelfMuted; });
+            selfMicBtn.innerText = isSelfMuted ? "Unmute My Mic" : "Mute My Mic";
+            selfMicBtn.classList.toggle('muted', isSelfMuted);
         }
 
         function initiatePeerConnection(targetSocketId, targetUsername, isInitiator) {
             if (peers[targetSocketId]) return;
-
-            const pc = new RTCPeerConnection(rtcConfig);
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-            pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    socket.emit('signal', {
-                        targetSocketId: targetSocketId,
-                        signalData: { candidate: event.candidate }
-                    });
-                }
+            pc.onicecandidate = (e) => {
+                if (e.candidate) socket.emit('signal', { targetSocketId, signalData: { candidate: e.candidate } });
             };
 
-            pc.ontrack = (event) => {
-                let audio = document.getElementById(`audio-${targetSocketId}`);
-                if (!audio) {
-                    audio = document.createElement('audio');
-                    audio.id = `audio-${targetSocketId}`;
-                    audio.autoplay = true;
-                    document.body.appendChild(audio);
-                }
-                audio.srcObject = event.streams[0];
-
+            pc.ontrack = (e) => {
+                let audio = document.getElementById(`audio-${targetSocketId}`) || document.createElement('audio');
+                audio.id = `audio-${targetSocketId}`;
+                audio.autoplay = true;
+                audio.srcObject = e.streams[0];
+                document.body.appendChild(audio);
                 peers[targetSocketId].audioEl = audio;
-                updatePeerUI();
             };
 
-            peers[targetSocketId] = {
-                pc: pc,
-                username: targetUsername,
-                audioEl: null,
-                isMuted: false,
-                volume: 1.0
-            };
-
+            peers[targetSocketId] = { pc, username: targetUsername };
             updatePeerUI();
 
             if (isInitiator) {
-                pc.createOffer().then(offer => {
-                    return pc.setLocalDescription(offer);
-                }).then(() => {
-                    socket.emit('signal', {
-                        targetSocketId: targetSocketId,
-                        signalData: { sdp: pc.localDescription }
-                    });
+                pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                    socket.emit('signal', { targetSocketId, signalData: { sdp: pc.localDescription } });
                 });
             }
         }
 
-        function toggleMutePeer(socketId) {
-            if (peers[socketId]) {
-                peers[socketId].isMuted = !peers[socketId].isMuted;
-                applyAudioSettings(socketId);
-                updatePeerUI();
-            }
-        }
-
-        function setPeerVolume(socketId, val) {
-            if (peers[socketId]) {
-                peers[socketId].volume = parseFloat(val);
-                applyAudioSettings(socketId);
-                const label = document.getElementById(`vol-label-${socketId}`);
-                if (label) label.innerText = `${Math.round(val * 100)}%`;
-            }
-        }
-
-        function applyAudioSettings(socketId) {
-            const peer = peers[socketId];
-            if (peer && peer.audioEl) {
-                peer.audioEl.muted = peer.isMuted;
-                // Standard volume ranges from 0.0 to 1.0
-                peer.audioEl.volume = Math.min(1.0, peer.volume);
-            }
-        }
-
         function updatePeerUI() {
-            const peerList = Object.entries(peers);
-            if (peerList.length === 0) {
-                peersContainer.innerHTML = "<span style='color:#aaa;'>Waiting for others to join...</span>";
-                return;
-            }
-
-            peersContainer.innerHTML = peerList.map(([sId, peer]) => `
-                <div class="peer-item">
-                    <div class="peer-header">
-                        <span><strong>${peer.username}</strong></span>
-                        <button class="mute-btn ${peer.isMuted ? 'muted' : ''}" onclick="toggleMutePeer('${sId}')">
-                            ${peer.isMuted ? 'Unmute' : 'Mute'}
-                        </button>
-                    </div>
-                    <div class="peer-controls">
-                        <input type="range" class="volume-slider" min="0" max="1" step="0.05" value="${peer.volume}" oninput="setPeerVolume('${sId}', this.value)">
-                        <span id="vol-label-${sId}" class="volume-label">${Math.round(peer.volume * 100)}%</span>
-                    </div>
-                </div>
-            `).join('');
+            const list = Object.values(peers);
+            peersContainer.innerHTML = list.length === 0 
+                ? "<span style='color:#aaa;'>Waiting for others to join...</span>"
+                : list.map(p => `<div class="peer-item"><strong>${p.username}</strong></div>`).join('');
         }
     </script>
 </body>

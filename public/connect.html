@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proximity Voice Dashboard</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 8px; display: inline-block; max-width: 400px; width: 100%; }
+        .status { font-weight: bold; margin-top: 15px; }
+        .connected { color: #4CAF50; }
+        .error { color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Proximity Voice Chat</h2>
+        <div id="status" class="status">Authenticating...</div>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+
+        if (!token) {
+            statusDiv.className = "status error";
+            statusDiv.innerText = "Error: Missing token. Run /voice in-game.";
+        } else {
+            fetch('/api/auth/validate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.valid) {
+                    statusDiv.className = "status error";
+                    statusDiv.innerText = "Error: Token invalid or expired. Run /voice again.";
+                    return;
+                }
+
+                statusDiv.className = "status connected";
+                statusDiv.innerText = `Connected as ${data.username}`;
+                
+                const socket = io({
+                    auth: { username: data.username }
+                });
+
+                socket.on('connect_error', (err) => {
+                    statusDiv.className = "status error";
+                    statusDiv.innerText = "Connection failed: " + err.message;
+                });
+            })
+            .catch(() => {
+                statusDiv.className = "status error";
+                statusDiv.innerText = "Server connection error.";
+            });
+        }
+    </script>
+</body>
+</html>

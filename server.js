@@ -23,14 +23,13 @@ app.use(express.json());
 // Helper function to validate auth tokens
 function isValidToken(token) {
     if (!token) return false;
-    return validTokens.has(token) || token === "test"; // "test" allowed for quick debugging
+    return validTokens.has(token) || token === "test";
 }
 
 // Token generation endpoint (Called by Minecraft Skript)
 app.post('/api/auth/token', (req, res) => {
     const { username, secret } = req.body;
     
-    // Optional secret check to prevent external API spam
     if (secret && secret !== ADMIN_KEY) {
         return res.status(403).json({ error: "Unauthorized" });
     }
@@ -90,14 +89,12 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
 
             switch (data.type) {
-                // Register player session
                 case 'join':
                     clientUsername = data.username;
                     activeSessions.set(clientUsername, ws);
                     broadcastRoster();
                     break;
 
-                // Handle WebRTC peer-to-peer signaling (offers, answers, ICE candidates)
                 case 'signal':
                     const targetSocket = activeSessions.get(data.target);
                     if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
@@ -109,11 +106,12 @@ wss.on('connection', (ws) => {
                     }
                     break;
 
-                // Position updates sent from Minecraft via Skript/HTTP or client bridge
+                // Position updates sent with dimension context
                 case 'position':
                     broadcastToPeers(clientUsername, {
                         type: 'position_update',
                         username: clientUsername,
+                        world: data.world || 'world',
                         x: data.x,
                         y: data.y,
                         z: data.z
@@ -133,7 +131,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Helper: Broadcast current online roster to all users
 function broadcastRoster() {
     const realUsers = Array.from(activeSessions.keys());
     const fakeUsers = Array.from(fakeSessions.keys());
@@ -148,7 +145,6 @@ function broadcastRoster() {
     }
 }
 
-// Helper: Relay position packet to active clients
 function broadcastToPeers(sender, packet) {
     const payload = JSON.stringify(packet);
     for (const [user, socket] of activeSessions) {
@@ -162,11 +158,9 @@ server.listen(PORT, () => {
     console.log(`===================================================`);
     console.log(`Backend server running on port ${PORT}`);
     
-    // Generate a temporary test token on redeploy
     const testToken = Math.random().toString(36).substring(2, 10);
     validTokens.add(testToken);
     
-    // Expire the test token after 10 minutes
     setTimeout(() => {
         validTokens.delete(testToken);
     }, 600000);

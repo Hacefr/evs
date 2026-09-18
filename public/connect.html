@@ -3,24 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proximity Voice Dashboard</title>
+    <title>Voice Dashboard</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
-        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 450px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 40px; }
+        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 480px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         .status { font-weight: bold; margin-top: 15px; font-size: 1.1em; }
         .connected { color: #4CAF50; }
         .error { color: #f44336; }
-        .peer-list { margin-top: 25px; text-align: left; }
-        .peer-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; }
-        .mute-btn { background: #f44336; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        
+        .controls-bar { margin-top: 20px; padding-bottom: 20px; border-bottom: 1px solid #333; }
+        .mic-btn { background: #2196F3; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; }
+        .mic-btn.muted { background: #f44336; }
+
+        .peer-list { margin-top: 20px; text-align: left; }
+        .peer-item { background: #2a2a2a; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
+        .peer-header { display: flex; justify-content: space-between; align-items: center; }
+        .peer-controls { display: flex; align-items: center; gap: 10px; }
+        .volume-slider { width: 100%; cursor: pointer; }
+        .volume-label { font-size: 0.85em; color: #aaa; min-width: 45px; text-align: right; }
+        .mute-btn { background: #f44336; color: white; border: none; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85em; }
         .mute-btn.muted { background: #4CAF50; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>Proximity Voice Chat</h2>
+        <h2>Server Voice Chat</h2>
         <div id="status" class="status">Connecting to voice channel...</div>
+        
+        <div class="controls-bar">
+            <button id="selfMicBtn" class="mic-btn" onclick="toggleSelfMic()">Mute My Mic</button>
+        </div>
+
         <div class="peer-list">
             <h3>Connected Players</h3>
             <div id="peersContainer">Waiting for others to join...</div>
@@ -30,16 +44,17 @@
     <script>
         const statusDiv = document.getElementById('status');
         const peersContainer = document.getElementById('peersContainer');
+        const selfMicBtn = document.getElementById('selfMicBtn');
         const urlParams = new URLSearchParams(window.location.search);
         const token = urlParams.get('token');
 
         let myUsername = "";
         let localStream = null;
         let socket = null;
-        
-        let myPosition = { x: 0, y: 0, z: 0, world: "world" };
-        const playerPositions = {}; // username -> { x, y, z, world }
-        const peers = {}; // socketId -> { pc, username, audioEl, isMuted }
+        let isSelfMuted = false;
+
+        // socketId -> { pc, username, audioEl, isMuted, volume }
+        const peers = {};
 
         const rtcConfig = {
             iceServers: [
@@ -117,15 +132,6 @@
                     }
                 });
 
-                // Real-time Position Listener for Proximity Audio Calculation
-                socket.on('position_update', ({ username, position }) => {
-                    playerPositions[username] = position;
-                    if (username === myUsername) {
-                        myPosition = position;
-                    }
-                    updateProximityAudio();
-                });
-
                 socket.on('peer_left', ({ socketId }) => {
                     if (peers[socketId]) {
                         if (peers[socketId].audioEl) peers[socketId].audioEl.remove();
@@ -139,6 +145,23 @@
                 statusDiv.className = "status error";
                 statusDiv.innerText = "Server connection error.";
             });
+        }
+
+        function toggleSelfMic() {
+            if (!localStream) return;
+            isSelfMuted = !isSelfMuted;
+            
+            localStream.getAudioTracks().forEach(track => {
+                track.enabled = !isSelfMuted;
+            });
+
+            if (isSelfMuted) {
+                selfMicBtn.innerText = "Unmute My Mic";
+                selfMicBtn.classList.add('muted');
+            } else {
+                selfMicBtn.innerText = "Mute My Mic";
+                selfMicBtn.classList.remove('muted');
+            }
         }
 
         function initiatePeerConnection(targetSocketId, targetUsername, isInitiator) {
@@ -174,7 +197,8 @@
                 pc: pc,
                 username: targetUsername,
                 audioEl: null,
-                isMuted: false
+                isMuted: false,
+                volume: 1.0
             };
 
             updatePeerUI();
@@ -194,10 +218,26 @@
         function toggleMutePeer(socketId) {
             if (peers[socketId]) {
                 peers[socketId].isMuted = !peers[socketId].isMuted;
-                if (peers[socketId].audioEl) {
-                    peers[socketId].audioEl.muted = peers[socketId].isMuted;
-                }
+                applyAudioSettings(socketId);
                 updatePeerUI();
+            }
+        }
+
+        function setPeerVolume(socketId, val) {
+            if (peers[socketId]) {
+                peers[socketId].volume = parseFloat(val);
+                applyAudioSettings(socketId);
+                const label = document.getElementById(`vol-label-${socketId}`);
+                if (label) label.innerText = `${Math.round(val * 100)}%`;
+            }
+        }
+
+        function applyAudioSettings(socketId) {
+            const peer = peers[socketId];
+            if (peer && peer.audioEl) {
+                peer.audioEl.muted = peer.isMuted;
+                // Standard volume ranges from 0.0 to 1.0
+                peer.audioEl.volume = Math.min(1.0, peer.volume);
             }
         }
 
@@ -210,38 +250,18 @@
 
             peersContainer.innerHTML = peerList.map(([sId, peer]) => `
                 <div class="peer-item">
-                    <span><strong>${peer.username}</strong></span>
-                    <button class="mute-btn ${peer.isMuted ? 'muted' : ''}" onclick="toggleMutePeer('${sId}')">
-                        ${peer.isMuted ? 'Unmute' : 'Mute'}
-                    </button>
+                    <div class="peer-header">
+                        <span><strong>${peer.username}</strong></span>
+                        <button class="mute-btn ${peer.isMuted ? 'muted' : ''}" onclick="toggleMutePeer('${sId}')">
+                            ${peer.isMuted ? 'Unmute' : 'Mute'}
+                        </button>
+                    </div>
+                    <div class="peer-controls">
+                        <input type="range" class="volume-slider" min="0" max="1" step="0.05" value="${peer.volume}" oninput="setPeerVolume('${sId}', this.value)">
+                        <span id="vol-label-${sId}" class="volume-label">${Math.round(peer.volume * 100)}%</span>
+                    </div>
                 </div>
             `).join('');
-        }
-
-        function updateProximityAudio() {
-            const MAX_DISTANCE = 30; // Maximum hearing distance in blocks
-
-            Object.values(peers).forEach(peer => {
-                if (peer.isMuted || !peer.audioEl) return;
-
-                const targetPos = playerPositions[peer.username];
-                if (!targetPos || targetPos.world !== myPosition.world) {
-                    peer.audioEl.volume = 0;
-                    return;
-                }
-
-                const dx = targetPos.x - myPosition.x;
-                const dy = targetPos.y - myPosition.y;
-                const dz = targetPos.z - myPosition.z;
-                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-                if (distance >= MAX_DISTANCE) {
-                    peer.audioEl.volume = 0;
-                } else {
-                    // Linear drop-off: 100% volume standing next to them, down to 0% at 30 blocks
-                    peer.audioEl.volume = Math.max(0, 1 - (distance / MAX_DISTANCE));
-                }
-            });
         }
     </script>
 </body>

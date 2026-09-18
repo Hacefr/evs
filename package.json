@@ -1,6 +1,7 @@
 {
   "name": "proximity-voice-chat",
   "version": "1.0.0",
+  "description": "WebRTC Proximity Voice Chat for Paper Minecraft",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

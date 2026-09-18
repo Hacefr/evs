@@ -10,7 +10,9 @@ const io = new Server(server, {
 });
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Enable automatic extension resolution so /connect routes directly to public/connect.html
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 // ==========================================
 // CONFIGURATION OPTIONS
@@ -28,8 +30,8 @@ const activeTokens = new Map();
 app.post('/api/auth/token', (req, res) => {
     const { username, secret } = req.body;
     
-    // Simple shared secret check (replace with your secret if needed)
-    if (secret !== process.env.VOICE_SECRET && secret !== 'MY_VOICE_SECRET') {
+    // Simple shared secret check
+    if (secret !== process.env.VOICE_SECRET && secret !== 'MY_SUPER_SECRET_KEY_123') {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 

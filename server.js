@@ -31,6 +31,7 @@ function generateOneTimeToken(username) {
     return token;
 }
 
+// Clean up expired auth tokens every 60 seconds
 setInterval(() => {
     const now = Date.now();
     for (const [token, data] of activeTokens.entries()) {
@@ -40,6 +41,7 @@ setInterval(() => {
     }
 }, 60000);
 
+// Route: Auth Redirect
 app.get('/connect', (req, res) => {
     const { user, secret, token } = req.query;
 
@@ -55,6 +57,7 @@ app.get('/connect', (req, res) => {
     res.status(403).send("Unauthorized connection link. Run /voice in-game.");
 });
 
+// Route: Token Validation
 app.post('/api/auth/validate', (req, res) => {
     const { token } = req.body;
 
@@ -71,6 +74,32 @@ app.post('/api/auth/validate', (req, res) => {
     });
 });
 
+// Route: Receive Minecraft Position Updates
+app.get('/api/position', (req, res) => {
+    const { username, world, x, y, z } = req.query;
+
+    if (!username) {
+        return res.status(400).send("Missing username parameter.");
+    }
+
+    const posData = {
+        username: username,
+        position: {
+            world: world || "world",
+            x: parseFloat(x) || 0,
+            y: parseFloat(y) || 0,
+            z: parseFloat(z) || 0
+        }
+    };
+
+    // Update in-memory position map and broadcast to all connected WebRTC browser sessions
+    playerPositions.set(username, posData.position);
+    io.emit('position_update', posData);
+
+    res.status(200).send("Position received");
+});
+
+// Socket.io Middleware
 io.use((socket, next) => {
     const username = socket.handshake.auth.username;
     if (!username) {
@@ -80,19 +109,25 @@ io.use((socket, next) => {
     next();
 });
 
+// Socket.io WebRTC Signaling Handler
 io.on('connection', async (socket) => {
-    // Get all sockets currently in the voice room BEFORE joining
     const socketsInRoom = await io.in('voice_room').fetchSockets();
     const existingPeers = socketsInRoom.map(s => ({ socketId: s.id, username: s.username }));
 
     socket.join('voice_room');
 
-    // Tell the newly connected player about all existing players
+    // Send existing peers to the newly connected socket
     socket.emit('all_peers', existingPeers);
 
-    // Notify existing players that a new peer joined
+    // Send currently known player positions to the newcomer
+    for (const [username, position] of playerPositions.entries()) {
+        socket.emit('position_update', { username, position });
+    }
+
+    // Notify other peers in room about the new user
     socket.to('voice_room').emit('peer_joined', { username: socket.username, socketId: socket.id });
 
+    // Relay WebRTC signaling packets
     socket.on('signal', (data) => {
         io.to(data.targetSocketId).emit('signal', {
             senderSocketId: socket.id,
@@ -101,6 +136,7 @@ io.on('connection', async (socket) => {
         });
     });
 
+    // Handle disconnection
     socket.on('disconnect', () => {
         playerPositions.delete(socket.username);
         io.to('voice_room').emit('peer_left', { socketId: socket.id });
@@ -108,5 +144,5 @@ io.on('connection', async (socket) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`Proximity Voice server listening on port ${PORT}`);
 });

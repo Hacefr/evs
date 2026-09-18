@@ -7,23 +7,29 @@
     <script src="/socket.io/socket.io.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
-        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 400px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        .card { background: #1e1e1e; padding: 30px; border-radius: 12px; display: inline-block; max-width: 450px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         .status { font-weight: bold; margin-top: 15px; font-size: 1.1em; }
         .connected { color: #4CAF50; }
         .error { color: #f44336; }
-        .active-users { margin-top: 20px; font-size: 0.9em; color: #aaa; text-align: left; }
+        .peer-list { margin-top: 25px; text-align: left; }
+        .peer-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; }
+        .mute-btn { background: #f44336; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .mute-btn.muted { background: #4CAF50; }
     </style>
 </head>
 <body>
     <div class="card">
         <h2>Proximity Voice Chat</h2>
         <div id="status" class="status">Connecting to voice channel...</div>
-        <div id="peers" class="active-users">Connected Players: Waiting for others...</div>
+        <div class="peer-list">
+            <h3>Connected Players</h3>
+            <div id="peersContainer">Waiting for others to join...</div>
+        </div>
     </div>
 
     <script>
         const statusDiv = document.getElementById('status');
-        const peersDiv = document.getElementById('peers');
+        const peersContainer = document.getElementById('peersContainer');
         const urlParams = new URLSearchParams(window.location.search);
         const token = urlParams.get('token');
 
@@ -31,8 +37,9 @@
         let localStream = null;
         let socket = null;
         
-        // socketId -> { pc, username, audioEl }
-        const peers = {};
+        let myPosition = { x: 0, y: 0, z: 0, world: "world" };
+        const playerPositions = {}; // username -> { x, y, z, world }
+        const peers = {}; // socketId -> { pc, username, audioEl, isMuted }
 
         const rtcConfig = {
             iceServers: [
@@ -62,12 +69,11 @@
                 statusDiv.className = "status connected";
                 statusDiv.innerText = `Connected as ${myUsername}`;
 
-                // Request microphone access
                 try {
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 } catch (err) {
                     statusDiv.className = "status error";
-                    statusDiv.innerText = "Microphone access denied! Allow mic access in browser.";
+                    statusDiv.innerText = "Microphone access denied!";
                     return;
                 }
 
@@ -75,19 +81,16 @@
                     auth: { username: myUsername }
                 });
 
-                // Receive list of existing users in room
                 socket.on('all_peers', (peerList) => {
                     peerList.forEach(({ socketId, username }) => {
                         initiatePeerConnection(socketId, username, true);
                     });
                 });
 
-                // New player connected
                 socket.on('peer_joined', ({ username, socketId }) => {
                     initiatePeerConnection(socketId, username, false);
                 });
 
-                // Handle signaling messages (Offers, Answers, ICE Candidates)
                 socket.on('signal', async ({ senderSocketId, senderUsername, signalData }) => {
                     if (!peers[senderSocketId]) {
                         initiatePeerConnection(senderSocketId, senderUsername, false);
@@ -114,13 +117,21 @@
                     }
                 });
 
-                // Player left
+                // Real-time Position Listener for Proximity Audio Calculation
+                socket.on('position_update', ({ username, position }) => {
+                    playerPositions[username] = position;
+                    if (username === myUsername) {
+                        myPosition = position;
+                    }
+                    updateProximityAudio();
+                });
+
                 socket.on('peer_left', ({ socketId }) => {
                     if (peers[socketId]) {
                         if (peers[socketId].audioEl) peers[socketId].audioEl.remove();
                         peers[socketId].pc.close();
                         delete peers[socketId];
-                        updatePeerList();
+                        updatePeerUI();
                     }
                 });
             })
@@ -134,11 +145,8 @@
             if (peers[targetSocketId]) return;
 
             const pc = new RTCPeerConnection(rtcConfig);
-
-            // Add local mic stream
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-            // Handle ICE candidates
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
                     socket.emit('signal', {
@@ -148,7 +156,6 @@
                 }
             };
 
-            // Receive remote audio track
             pc.ontrack = (event) => {
                 let audio = document.getElementById(`audio-${targetSocketId}`);
                 if (!audio) {
@@ -160,18 +167,18 @@
                 audio.srcObject = event.streams[0];
 
                 peers[targetSocketId].audioEl = audio;
-                updatePeerList();
+                updatePeerUI();
             };
 
             peers[targetSocketId] = {
                 pc: pc,
                 username: targetUsername,
-                audioEl: null
+                audioEl: null,
+                isMuted: false
             };
 
-            updatePeerList();
+            updatePeerUI();
 
-            // Create initial offer if initiator
             if (isInitiator) {
                 pc.createOffer().then(offer => {
                     return pc.setLocalDescription(offer);
@@ -180,15 +187,61 @@
                         targetSocketId: targetSocketId,
                         signalData: { sdp: pc.localDescription }
                     });
-                }).catch(err => console.error("Offer creation error:", err));
+                });
             }
         }
 
-        function updatePeerList() {
-            const activeList = Object.values(peers).map(p => p.username);
-            peersDiv.innerText = activeList.length > 0 
-                ? "Active Players: " + activeList.join(", ") 
-                : "Connected Players: Waiting for others...";
+        function toggleMutePeer(socketId) {
+            if (peers[socketId]) {
+                peers[socketId].isMuted = !peers[socketId].isMuted;
+                if (peers[socketId].audioEl) {
+                    peers[socketId].audioEl.muted = peers[socketId].isMuted;
+                }
+                updatePeerUI();
+            }
+        }
+
+        function updatePeerUI() {
+            const peerList = Object.entries(peers);
+            if (peerList.length === 0) {
+                peersContainer.innerHTML = "<span style='color:#aaa;'>Waiting for others to join...</span>";
+                return;
+            }
+
+            peersContainer.innerHTML = peerList.map(([sId, peer]) => `
+                <div class="peer-item">
+                    <span><strong>${peer.username}</strong></span>
+                    <button class="mute-btn ${peer.isMuted ? 'muted' : ''}" onclick="toggleMutePeer('${sId}')">
+                        ${peer.isMuted ? 'Unmute' : 'Mute'}
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function updateProximityAudio() {
+            const MAX_DISTANCE = 30; // Maximum hearing distance in blocks
+
+            Object.values(peers).forEach(peer => {
+                if (peer.isMuted || !peer.audioEl) return;
+
+                const targetPos = playerPositions[peer.username];
+                if (!targetPos || targetPos.world !== myPosition.world) {
+                    peer.audioEl.volume = 0;
+                    return;
+                }
+
+                const dx = targetPos.x - myPosition.x;
+                const dy = targetPos.y - myPosition.y;
+                const dz = targetPos.z - myPosition.z;
+                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (distance >= MAX_DISTANCE) {
+                    peer.audioEl.volume = 0;
+                } else {
+                    // Linear drop-off: 100% volume standing next to them, down to 0% at 30 blocks
+                    peer.audioEl.volume = Math.max(0, 1 - (distance / MAX_DISTANCE));
+                }
+            });
         }
     </script>
 </body>

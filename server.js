@@ -19,7 +19,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "MY_SUPER_SECRET_KEY_123";
 
-const activeTokens = new Map(); // token -> { username, createdAt }
+const activeTokens = new Map(); // username -> token
 const playerPositions = new Map(); // username -> { world, x, y, z, lastSeen }
 
 function generateOneTimeToken(username) {
@@ -41,12 +41,25 @@ setInterval(() => {
     }
 }, 60000);
 
-// Serve frontend route
+// Direct Connect URL endpoint (Generates token on load or validates URL secret)
 app.get('/connect', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'connect.html'));
+    const { user, secret, token } = req.query;
+
+    // Direct user auth link from Skript
+    if (user && secret === ADMIN_SECRET) {
+        const generatedToken = generateOneTimeToken(user);
+        return res.redirect(`/connect.html?token=${generatedToken}`);
+    }
+
+    // Direct token link
+    if (token) {
+        return res.sendFile(path.join(__dirname, 'public', 'connect.html'));
+    }
+
+    res.status(403).send("Unauthorized connection link. Please run /voice in-game.");
 });
 
-// GET Endpoint for native Skript URL fetching
+// GET Endpoint for silent Skript background triggers
 app.get('/api/auth/token', (req, res) => {
     const { username, secret } = req.query;
 
@@ -59,10 +72,10 @@ app.get('/api/auth/token', (req, res) => {
     }
 
     const token = generateOneTimeToken(username);
-    res.send(`https://evs-7cx7.onrender.com/connect?token=${token}`);
+    res.send("OK");
 });
 
-// POST Endpoint for position telemetry via Skript
+// GET Endpoint for position telemetry via Skript
 app.get('/api/position', (req, res) => {
     const { username, world, x, y, z } = req.query;
 

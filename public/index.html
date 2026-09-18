@@ -45,7 +45,6 @@
             flex-direction: column;
         }
 
-        /* Top Bar */
         .top-bar {
             display: flex;
             justify-content: space-between;
@@ -88,7 +87,6 @@
             gap: 8px;
             font-size: 0.85rem;
             color: var(--text-muted);
-            transition: color 0.2s;
         }
 
         .mic-indicator.recording {
@@ -113,36 +111,6 @@
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
 
-        /* Navigation Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--border-color);
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        .tab-btn {
-            flex: 1;
-            padding: 12px;
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            border-bottom: 2px solid transparent;
-        }
-
-        .tab-btn:hover {
-            color: var(--text-main);
-        }
-
-        .tab-btn.active {
-            color: var(--accent-blue);
-            border-bottom-color: var(--accent-blue);
-            background: rgba(59, 130, 246, 0.05);
-        }
-
-        /* Content Layout */
         .content {
             display: grid;
             grid-template-columns: 1fr 300px;
@@ -168,7 +136,6 @@
             font-weight: 700;
         }
 
-        /* Player Cards */
         .player-list {
             display: flex;
             flex-direction: column;
@@ -183,12 +150,6 @@
             background-color: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            transition: border-color 0.2s;
-        }
-
-        .player-card.speaking {
-            border-color: var(--accent-green);
-            background: rgba(16, 185, 129, 0.03);
         }
 
         .player-meta {
@@ -201,7 +162,7 @@
             width: 36px;
             height: 36px;
             border-radius: 6px;
-            background-color: var(--border-color);
+            background-color: var(--accent-blue);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -219,27 +180,6 @@
             color: var(--text-muted);
         }
 
-        /* Audio Visualizer Bar */
-        .audio-bar {
-            width: 60px;
-            height: 6px;
-            background: var(--border-color);
-            border-radius: 3px;
-            overflow: hidden;
-        }
-
-        .audio-level {
-            height: 100%;
-            width: 0%;
-            background: var(--accent-green);
-            transition: width 0.1s ease;
-        }
-
-        .player-card.speaking .audio-level {
-            width: 75%;
-        }
-
-        /* Global Roster */
         .roster-item {
             display: flex;
             align-items: center;
@@ -249,24 +189,6 @@
             font-size: 0.85rem;
         }
 
-        .roster-badge {
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-weight: 600;
-        }
-
-        .badge-in-range {
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--accent-green);
-        }
-
-        .badge-far {
-            background: rgba(156, 163, 175, 0.15);
-            color: var(--text-muted);
-        }
-
-        /* Control Dock */
         .control-dock {
             display: flex;
             justify-content: center;
@@ -277,40 +199,25 @@
         }
 
         .btn {
-            display: flex;
-            align-items: center;
-            gap: 8px;
             padding: 10px 18px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
             background-color: var(--panel-bg);
             color: var(--text-main);
             font-weight: 600;
-            font-size: 0.9rem;
             cursor: pointer;
-            transition: all 0.2s;
         }
 
-        .btn:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-            border-color: var(--text-muted);
-        }
-
-        .btn-active-danger {
+        .btn-danger {
             background-color: rgba(239, 68, 68, 0.15);
             border-color: var(--accent-red);
             color: var(--accent-red);
-        }
-
-        .btn-active-danger:hover {
-            background-color: rgba(239, 68, 68, 0.25);
         }
     </style>
 </head>
 <body>
 
     <div class="dashboard">
-        <!-- Top Bar -->
         <div class="top-bar">
             <div class="user-info">
                 <div class="status-badge">
@@ -320,118 +227,234 @@
                 <span id="playerUsername" style="font-weight: 600; font-size: 0.95rem;">Player</span>
             </div>
 
-            <div class="mic-indicator recording" id="micIndicator">
+            <div class="mic-indicator" id="micIndicator">
                 <div class="mic-dot"></div>
-                <span id="micStatusText">Recording Active</span>
+                <span id="micStatusText">Initializing Audio...</span>
             </div>
         </div>
 
-        <!-- Navigation Tabs -->
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab(this)">Proximity Voice</button>
-            <button class="tab-btn" onclick="switchTab(this)">Text & Group Chat</button>
-        </div>
-
-        <!-- Content Area -->
         <div class="content">
-            <!-- Main Panel: Nearby Speakers -->
             <div class="main-panel">
-                <div class="section-title">Nearby Players (Spatial Range: 30 Blocks)</div>
+                <div class="section-title">Active Voice Peers</div>
                 <div class="player-list" id="nearbyPlayerList">
-                    
-                    <!-- Placeholder Player Card -->
-                    <div class="player-card speaking">
-                        <div class="player-meta">
-                            <div class="avatar" style="background-color: #3b82f6;">A</div>
-                            <div class="player-details">
-                                <h4>Alex_Craft</h4>
-                                <p>4 blocks away • Left Ear</p>
-                            </div>
-                        </div>
-                        <div class="audio-bar">
-                            <div class="audio-level"></div>
-                        </div>
-                    </div>
-
+                    <!-- Populated dynamically via JavaScript WebRTC connections -->
                 </div>
             </div>
 
-            <!-- Sidebar: Global Server Voice Roster -->
             <div class="sidebar-panel">
                 <div class="section-title">Connected Roster</div>
-                <div id="globalRoster">
-                    <div class="roster-item">
-                        <span>Alex_Craft</span>
-                        <span class="roster-badge badge-in-range">In Range</span>
-                    </div>
-                </div>
+                <div id="globalRoster"></div>
             </div>
         </div>
 
-        <!-- Control Dock -->
         <div class="control-dock">
-            <button class="btn" id="muteBtn" onclick="toggleMute()">
-                <span id="muteLabel">Mute Mic</span>
-            </button>
-            <button class="btn" id="deafenBtn" onclick="toggleDeafen()">
-                <span id="deafenLabel">Deafen Audio</span>
-            </button>
-            <button class="btn" onclick="alert('Mic sensitivity auto-calibrated.')">
-                Settings
-            </button>
+            <button class="btn" id="startAudioBtn" onclick="initAudio()">Enable Microphone</button>
+            <button class="btn" id="muteBtn" onclick="toggleMute()">Mute Mic</button>
         </div>
     </div>
 
-    <script>
-        let isMuted = false;
-        let isDeafened = false;
+    <!-- Hidden element container for dynamically created peer audio tracks -->
+    <div id="audioContainer" style="display:none;"></div>
 
-        // Auto-grab player username from query string if present (e.g. ?user=Steve)
+    <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const user = urlParams.get('user');
-        if (user) {
-            document.getElementById('playerUsername').innerText = user;
+        const username = urlParams.get('user') || 'User_' + Math.floor(Math.random() * 1000);
+        document.getElementById('playerUsername').innerText = username;
+
+        let localStream = null;
+        let ws = null;
+        let peerConnections = {};
+        let isMuted = false;
+
+        const myPosition = { x: 0, y: 0, z: 0, world: 'world' };
+
+        // Connect WebSocket Signaling Server
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: 'join', username: username }));
+            };
+
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+
+                switch(data.type) {
+                    case 'roster':
+                        updateRosterUI(data.users);
+                        data.users.forEach(peer => {
+                            if (peer !== username && !peerConnections[peer]) {
+                                createPeerConnection(peer, true);
+                            }
+                        });
+                        break;
+
+                    case 'signal':
+                        handleSignalData(data.sender, data.signalData);
+                        break;
+
+                    case 'position_update':
+                        handlePeerPosition(data);
+                        break;
+                }
+            };
+        }
+
+        // Initialize WebRTC Microphone Access
+        async function initAudio() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                document.getElementById('micIndicator').classList.add('recording');
+                document.getElementById('micStatusText').innerText = 'Microphone Active';
+                document.getElementById('startAudioBtn').style.display = 'none';
+
+                // Attach microphone tracks to existing peer connections
+                Object.keys(peerConnections).forEach(peer => {
+                    localStream.getTracks().forEach(track => {
+                        peerConnections[peer].addTrack(track, localStream);
+                    });
+                });
+            } catch (err) {
+                alert('Microphone access denied or unavailable.');
+            }
+        }
+
+        // Create WebRTC Peer Connection
+        function createPeerConnection(targetUser, isInitiator) {
+            const pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+
+            peerConnections[targetUser] = pc;
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send(JSON.stringify({
+                        type: 'signal',
+                        target: targetUser,
+                        signalData: { candidate: event.candidate }
+                    }));
+                }
+            };
+
+            pc.ontrack = (event) => {
+                let audioEl = document.getElementById(`audio-${targetUser}`);
+                if (!audioEl) {
+                    audioEl = document.createElement('audio');
+                    audioEl.id = `audio-${targetUser}`;
+                    audioEl.autoplay = true;
+                    document.getElementById('audioContainer').appendChild(audioEl);
+                }
+                audioEl.srcObject = event.streams[0];
+                addPlayerCard(targetUser);
+            };
+
+            if (isInitiator) {
+                pc.onnegotiationneeded = async () => {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({
+                        type: 'signal',
+                        target: targetUser,
+                        signalData: { sdp: pc.localDescription }
+                    }));
+                };
+            }
+        }
+
+        async function handleSignalData(sender, signalData) {
+            if (!peerConnections[sender]) {
+                createPeerConnection(sender, false);
+            }
+
+            const pc = peerConnections[sender];
+
+            if (signalData.sdp) {
+                await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+                if (signalData.sdp.type === 'offer') {
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify({
+                        type: 'signal',
+                        target: sender,
+                        signalData: { sdp: pc.localDescription }
+                    }));
+                }
+            } else if (signalData.candidate) {
+                await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+            }
+        }
+
+        // Distance & World Audio Calculations
+        function handlePeerPosition(data) {
+            const audioEl = document.getElementById(`audio-${data.username}`);
+            if (!audioEl) return;
+
+            // Separate dimensions: Mute if in different worlds
+            if (data.world !== myPosition.world) {
+                audioEl.volume = 0;
+                return;
+            }
+
+            const dx = data.x - myPosition.x;
+            const dy = data.y - myPosition.y;
+            const dz = data.z - myPosition.z;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            // Attenuate volume over a 30-block spatial radius
+            const maxDistance = 30;
+            if (distance > maxDistance) {
+                audioEl.volume = 0;
+            } else {
+                audioEl.volume = 1 - (distance / maxDistance);
+            }
         }
 
         function toggleMute() {
+            if (!localStream) return;
             isMuted = !isMuted;
+            localStream.getAudioTracks()[0].enabled = !isMuted;
             const btn = document.getElementById('muteBtn');
-            const label = document.getElementById('muteLabel');
-            const indicator = document.getElementById('micIndicator');
-            const statusText = document.getElementById('micStatusText');
-
-            if (isMuted) {
-                btn.classList.add('btn-active-danger');
-                label.innerText = 'Unmute Mic';
-                indicator.classList.remove('recording');
-                statusText.innerText = 'Microphone Muted';
-            } else {
-                btn.classList.remove('btn-active-danger');
-                label.innerText = 'Mute Mic';
-                indicator.classList.add('recording');
-                statusText.innerText = 'Recording Active';
-            }
+            btn.classList.toggle('btn-danger', isMuted);
+            btn.innerText = isMuted ? 'Unmute Mic' : 'Mute Mic';
         }
 
-        function toggleDeafen() {
-            isDeafened = !isDeafened;
-            const btn = document.getElementById('deafenBtn');
-            const label = document.getElementById('deafenLabel');
-
-            if (isDeafened) {
-                btn.classList.add('btn-active-danger');
-                label.innerText = 'Undeafen Audio';
-            } else {
-                btn.classList.remove('btn-active-danger');
-                label.innerText = 'Deafen Audio';
-            }
+        function updateRosterUI(users) {
+            const container = document.getElementById('globalRoster');
+            container.innerHTML = '';
+            users.forEach(u => {
+                const item = document.createElement('div');
+                item.className = 'roster-item';
+                item.innerHTML = `<span>${u}</span>`;
+                container.appendChild(item);
+            });
         }
 
-        function switchTab(element) {
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            element.classList.add('active');
+        function addPlayerCard(user) {
+            const list = document.getElementById('nearbyPlayerList');
+            if (document.getElementById(`card-${user}`)) return;
+
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            card.id = `card-${user}`;
+            card.innerHTML = `
+                <div class="player-meta">
+                    <div class="avatar">${user.charAt(0).toUpperCase()}</div>
+                    <div class="player-details">
+                        <h4>${user}</h4>
+                        <p>Voice Connected</p>
+                    </div>
+                </div>
+            `;
+            list.appendChild(card);
         }
+
+        connectWebSocket();
     </script>
 </body>
 </html>
-

@@ -13,10 +13,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "MY_SUPER_SECRET_KEY_123";
 
+// Map: token -> { username, expires }
 const validTokens = new Map();
+const activeSessions = new Map(); // token -> username
 const players = new Map(); // username -> { ws, x, y, z, world, status }
 
-// Clean up expired tokens
+// Clean expired tokens automatically
 setInterval(() => {
     const now = Date.now();
     for (const [token, data] of validTokens.entries()) {
@@ -24,32 +26,43 @@ setInterval(() => {
     }
 }, 60000);
 
-// API Endpoint: Issue Auth Token
+// API: Skript requests a single-use token
 app.post('/api/auth/token', (req, res) => {
     const { username, secret } = req.body;
     if (secret !== ADMIN_SECRET) return res.status(403).json({ error: "Unauthorized" });
     if (!username) return res.status(400).json({ error: "Missing username" });
 
-    const token = crypto.randomBytes(4).toString('hex');
-    const expires = Date.now() + (10 * 60 * 1000);
+    const token = crypto.randomBytes(8).toString('hex');
+    const expires = Date.now() + (5 * 60 * 1000); // 5 minute link expiration window
     validTokens.set(token, { username, expires });
 
-    const generatedUrl = `https://evs-7cx7.onrender.com/?auth=${token}&user=${username}`;
-    console.log(`[AUTH] Token issued for ${username}`);
+    const generatedUrl = `https://evs-7cx7.onrender.com/?auth=${token}&user=${encodeURIComponent(username)}`;
+    console.log(`[AUTH] Issued single-use token for ${username}`);
     return res.json({ token, url: generatedUrl });
 });
 
-// API Endpoint: Position Telemetry
-app.post('/api/position', (req, res) => {
-    const { username, world, x, y, z } = req.body;
-    if (username && players.has(username)) {
-        const p = players.get(username);
-        p.x = x; p.y = y; p.z = z; p.world = world;
+// Serve UI ONLY with a valid token
+app.get('/', (req, res) => {
+    const { auth, user } = req.query;
+
+    if (auth && validTokens.has(auth)) {
+        const tokenData = validTokens.get(auth);
+
+        if (tokenData.username === user && tokenData.expires > Date.now()) {
+            // BURN TOKEN IMMEDIATELY so page reload fails
+            validTokens.delete(auth);
+            activeSessions.set(auth, user);
+            console.log(`[AUTH] Token ${auth} used and burned for user ${user}`);
+
+            return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+        }
     }
-    res.sendStatus(200);
+
+    // Stealth 404 for missing or reused tokens
+    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
 });
 
-// WebSocket Connection & Signaling
+// WebSocket Connection
 wss.on('connection', (ws, req) => {
     const urlParams = new URLSearchParams(req.url.split('?')[1]);
     const username = urlParams.get('user');
@@ -67,15 +80,11 @@ wss.on('connection', (ws, req) => {
         try {
             const data = JSON.parse(message);
             
-            // Status changes (mute/unmute)
-            if (data.type === 'status_change') {
-                if (players.has(username)) {
-                    players.get(username).status = data.status;
-                    broadcastRoster();
-                }
+            if (data.type === 'status_change' && players.has(username)) {
+                players.get(username).status = data.status;
+                broadcastRoster();
             }
 
-            // WebRTC Signaling relay (offer, answer, candidate)
             if (data.target && players.has(data.target)) {
                 players.get(data.target).ws.send(JSON.stringify({
                     sender: username,
@@ -88,11 +97,11 @@ wss.on('connection', (ws, req) => {
         }
     });
 
-    ws.on('close', () => {
+    ws.onclose = () => {
         players.delete(username);
         console.log(`[VC] ${username} disconnected.`);
         broadcastRoster();
-    });
+    };
 });
 
 function broadcastRoster() {
@@ -107,17 +116,14 @@ function broadcastRoster() {
     });
 }
 
-// Web UI Root Route (Stealth Fallback vs Real UI)
-app.get('/', (req, res) => {
-    const { auth, user } = req.query;
-    if (auth && validTokens.has(auth)) {
-        const tokenData = validTokens.get(auth);
-        if (tokenData.username === user && tokenData.expires > Date.now()) {
-            return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-        }
+// Telemetry
+app.post('/api/position', (req, res) => {
+    const { username, world, x, y, z } = req.body;
+    if (username && players.has(username)) {
+        const p = players.get(username);
+        p.x = x; p.y = y; p.z = z; p.world = world;
     }
-    // Stealth Apache 404 screen
-    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+    res.sendStatus(200);
 });
 
 const PORT = process.env.PORT || 10000;

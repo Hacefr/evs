@@ -1,141 +1,171 @@
 const express = require('express');
 const http = require('http');
-const path = require('path');
+const { Server } = require('socket.io');
 const crypto = require('crypto');
-const { Server } = require('ws');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new Server({ server });
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Set up security secret from environment or fallback
+// Environment Variables / Configurations
+const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "MY_SUPER_SECRET_KEY_123";
 
-// Storage Maps
-const validTokens = new Map(); // token -> { username, expires }
-const activeSessions = new Map(); // token -> username
-const players = new Map(); // username -> { ws, x, y, z, world, status }
+// In-Memory Storage
+const activeTokens = new Map(); // token -> { username, createdAt }
+const playerPositions = new Map(); // username -> { world, x, y, z, lastSeen }
 
-// Automatically purge expired tokens every minute
+// Helper function to generate single-use token
+function generateOneTimeToken(username) {
+    const token = crypto.randomBytes(16).toString('hex');
+    activeTokens.set(token, {
+        username: username,
+        createdAt: Date.now()
+    });
+    return token;
+}
+
+// Clean up expired tokens (older than 5 minutes)
 setInterval(() => {
     const now = Date.now();
-    for (const [token, data] of validTokens.entries()) {
-        if (data.expires < now) validTokens.delete(token);
+    for (const [token, data] of activeTokens.entries()) {
+        if (now - data.createdAt > 5 * 60 * 1000) {
+            activeTokens.delete(token);
+        }
     }
 }, 60000);
 
-// API Endpoint: Skript requests a single-use token
-app.post('/api/auth/token', (req, res) => {
-    const { username, secret } = req.body;
-    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: "Unauthorized secret" });
-    if (!username) return res.status(400).json({ error: "Missing username" });
+// --------------------------------------------------------------------
+// API ENDPOINTS
+// --------------------------------------------------------------------
 
-    const token = crypto.randomBytes(8).toString('hex');
-    const expires = Date.now() + (5 * 60 * 1000); // 5-minute link expiration window
-    validTokens.set(token, { username, expires });
+// GET Endpoint: Native Skript compatible token generation
+app.get('/api/auth/token', (req, res) => {
+    const { username, secret } = req.query;
 
-    const generatedUrl = `https://evs-7cx7.onrender.com/?auth=${token}&user=${encodeURIComponent(username)}`;
-    console.log(`[AUTH] Single-use token generated for ${username}`);
-    return res.json({ token, url: generatedUrl });
-});
-
-// Root Route: Strictly requires valid auth & user query parameters
-app.get('/', (req, res) => {
-    const { auth, user } = req.query;
-
-    // Reject direct access attempts without parameters
-    if (!auth || !user) {
-        return res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+    if (!secret || secret !== ADMIN_SECRET) {
+        return res.status(403).send("UNAUTHORIZED");
     }
-
-    // Verify token validity
-    if (validTokens.has(auth)) {
-        const tokenData = validTokens.get(auth);
-
-        if (tokenData.username === user && tokenData.expires > Date.now()) {
-            // BURN TOKEN IMMEDIATELY so reloading or re-opening invalidates it
-            validTokens.delete(auth);
-            activeSessions.set(auth, user);
-            console.log(`[AUTH] Token ${auth} consumed and burned for user ${user}`);
-
-            return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-        }
-    }
-
-    // Fallback: Expired, invalid, or re-used token triggers 404
-    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
-});
-
-// Serve static assets (CSS, JS, images) AFTER root route verification
-app.use(express.static(path.join(__dirname, 'public')));
-
-// WebSocket Server Engine
-wss.on('connection', (ws, req) => {
-    const urlParams = new URLSearchParams(req.url.split('?')[1]);
-    const username = urlParams.get('user');
 
     if (!username) {
-        ws.close();
-        return;
+        return res.status(400).send("MISSING_USERNAME");
     }
 
-    players.set(username, { ws, x: 0, y: 0, z: 0, world: 'dirtworld', status: 'unmuted' });
-    console.log(`[VC] ${username} connected to voice channel.`);
-    broadcastRoster();
-
-    ws.on('message', (message) => {
-        try {
-            const data = JSON.parse(message);
-            
-            if (data.type === 'status_change' && players.has(username)) {
-                players.get(username).status = data.status;
-                broadcastRoster();
-            }
-
-            // WebRTC Signaling Relay (Offers, Answers, ICE Candidates)
-            if (data.target && players.has(data.target)) {
-                players.get(data.target).ws.send(JSON.stringify({
-                    sender: username,
-                    type: data.type,
-                    payload: data.payload
-                }));
-            }
-        } catch (e) {
-            console.error(`[WS Error] ${e.message}`);
-        }
-    });
-
-    ws.onclose = () => {
-        players.delete(username);
-        console.log(`[VC] ${username} disconnected.`);
-        broadcastRoster();
-    };
+    const token = generateOneTimeToken(username);
+    res.send(`https://evs-7cx7.onrender.com/connect.html?token=${token}`);
 });
 
-function broadcastRoster() {
-    const list = Array.from(players.entries()).map(([name, p]) => ({
-        username: name,
-        status: p.status
-    }));
-    
-    const payload = JSON.stringify({ type: 'roster', players: list });
-    players.forEach((p) => {
-        if (p.ws.readyState === 1) p.ws.send(payload);
-    });
-}
+// POST Endpoint: Standard JSON token generation
+app.post('/api/auth/token', (req, res) => {
+    const { username, secret } = req.body;
 
-// Telemetry endpoint for player position updates
+    if (!secret || secret !== ADMIN_SECRET) {
+        return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    if (!username) {
+        return res.status(400).json({ error: "Missing username parameter" });
+    }
+
+    const token = generateOneTimeToken(username);
+    res.json({
+        token: token,
+        url: `https://evs-7cx7.onrender.com/connect.html?token=${token}`
+    });
+});
+
+// POST Endpoint: Token Validation & Burning
+app.post('/api/auth/validate', (req, res) => {
+    const { token } = req.body;
+
+    if (!token || !activeTokens.has(token)) {
+        return res.status(401).json({ valid: false, error: "Invalid or expired token" });
+    }
+
+    const tokenData = activeTokens.get(token);
+    
+    // Burn token immediately after use
+    activeTokens.delete(token);
+
+    res.json({
+        valid: true,
+        username: tokenData.username
+    });
+});
+
+// POST Endpoint: Position Telemetry from Minecraft
 app.post('/api/position', (req, res) => {
     const { username, world, x, y, z } = req.body;
-    if (username && players.has(username)) {
-        const p = players.get(username);
-        p.x = x; p.y = y; p.z = z; p.world = world;
+
+    if (!username) {
+        return res.status(400).json({ error: "Missing username" });
     }
-    res.sendStatus(200);
+
+    const posData = {
+        world: world || "world",
+        x: parseFloat(x) || 0,
+        y: parseFloat(y) || 0,
+        z: parseFloat(z) || 0,
+        lastSeen: Date.now()
+    };
+
+    playerPositions.set(username, posData);
+
+    // Broadcast updated positions to connected WebRTC peers
+    io.emit('position_update', {
+        username: username,
+        position: posData
+    });
+
+    res.json({ success: true });
 });
 
-// Start Server
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Proximity VC Server online on port ${PORT}`));
+// GET Endpoint: Fetch current player telemetry state
+app.get('/api/positions', (req, res) => {
+    const positionsObj = {};
+    for (const [user, pos] of playerPositions.entries()) {
+        positionsObj[user] = pos;
+    }
+    res.json(positionsObj);
+});
+
+// --------------------------------------------------------------------
+// WEBRTC WEBSOCKET SIGNALING
+// --------------------------------------------------------------------
+io.on('connection', (socket) => {
+    let authenticatedUser = null;
+
+    socket.on('join_voice', (data) => {
+        authenticatedUser = data.username;
+        socket.join('voice_room');
+        socket.to('voice_room').emit('peer_joined', { username: authenticatedUser, socketId: socket.id });
+    });
+
+    socket.on('signal', (data) => {
+        io.to(data.targetSocketId).emit('signal', {
+            senderSocketId: socket.id,
+            senderUsername: authenticatedUser,
+            signalData: data.signalData
+        });
+    });
+
+    socket.on('disconnect', () => {
+        if (authenticatedUser) {
+            playerPositions.delete(authenticatedUser);
+            io.to('voice_room').emit('peer_left', { username: authenticatedUser, socketId: socket.id });
+        }
+    });
+});
+
+server.listen(PORT, () => {
+    console.log(`Proximity Voice Backend running on port ${PORT}`);
+});
